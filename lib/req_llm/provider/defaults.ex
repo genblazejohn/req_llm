@@ -634,6 +634,15 @@ defmodule ReqLLM.Provider.Defaults do
     }
   end
 
+  defp encode_openai_content_part(%ReqLLM.Message.ContentPart{type: :video_url, url: url}) do
+    %{
+      type: "video_url",
+      video_url: %{
+        url: url
+      }
+    }
+  end
+
   defp encode_openai_content_part(%ReqLLM.Message.ContentPart{
          type: :file,
          data: data,

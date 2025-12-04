@@ -6,6 +6,7 @@ defmodule ReqLLM.Message.ContentPart do
   - `:text` - Plain text content
   - `:image_url` - Image from URL
   - `:image` - Image from binary data
+  - `:video_url` - Video from URL
   - `:file` - File attachment
   - `:thinking` - Chain-of-thought thinking content
 
@@ -17,7 +18,7 @@ defmodule ReqLLM.Message.ContentPart do
   use TypedStruct
 
   typedstruct enforce: true do
-    field(:type, :text | :image_url | :image | :file | :thinking, enforce: true)
+    field(:type, :text | :image_url | :image | :video_url | :file | :thinking, enforce: true)
 
     field(:text, String.t() | nil, default: nil)
     field(:url, String.t() | nil, default: nil)
@@ -47,6 +48,9 @@ defmodule ReqLLM.Message.ContentPart do
   @spec image_url(String.t()) :: t()
   def image_url(url), do: %__MODULE__{type: :image_url, url: url}
 
+  @spec video_url(String.t()) :: t()
+  def video_url(url), do: %__MODULE__{type: :video_url, url: url}
+
   @spec image(binary(), String.t()) :: t()
   def image(data, media_type \\ "image/png"),
     do: %__MODULE__{type: :image, data: data, media_type: media_type}
@@ -62,6 +66,7 @@ defmodule ReqLLM.Message.ContentPart do
           :text -> inspect_text(part.text, opts)
           :thinking -> inspect_text(part.text, opts)
           :image_url -> "url: #{part.url}"
+          :video_url -> "url: #{part.url}"
           :image -> "#{part.media_type} (#{byte_size(part.data)} bytes)"
           :file -> "#{part.media_type} (#{byte_size(part.data || <<>>)} bytes)"
         end

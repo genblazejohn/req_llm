@@ -451,6 +451,16 @@ defmodule ReqLLM.Context do
     }
   end
 
+  @doc "Build a message with text and a video URL for the given role."
+  @spec with_video(atom(), String.t(), String.t(), map()) :: Message.t()
+  def with_video(role, text, url, meta \\ %{}) do
+    %Message{
+      role: role,
+      content: [ContentPart.text(text), ContentPart.video_url(url)],
+      metadata: meta
+    }
+  end
+
   @doc "Build a message from role and content parts (metadata optional)."
   @spec build(atom(), [ContentPart.t()], map()) :: Message.t()
   def build(role, content, meta \\ %{}) when is_list(content) do

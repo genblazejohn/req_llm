@@ -68,6 +68,24 @@ defmodule ReqLLM.ContextTest do
       assert message.metadata == %{}
       assert length(message.content) == 2
     end
+
+    test "with_video/4 creates message with text and video" do
+      message =
+        Context.with_video(:user, "Watch this", "http://example.com/video.mp4", %{id: 456})
+
+      assert message.role == :user
+      assert message.metadata == %{id: 456}
+      assert [text_part, video_part] = message.content
+      assert %ContentPart{type: :text, text: "Watch this"} = text_part
+      assert %ContentPart{type: :video_url, url: "http://example.com/video.mp4"} = video_part
+    end
+
+    test "with_video/3 uses empty metadata" do
+      message = Context.with_video(:user, "Video response", "http://test.com/vid.mp4")
+
+      assert message.metadata == %{}
+      assert length(message.content) == 2
+    end
   end
 
   describe "role-specific constructors" do

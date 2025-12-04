@@ -46,6 +46,17 @@ defmodule ReqLLM.Message.ContentPartTest do
     end
   end
 
+  describe "video_url/1" do
+    test "creates video URL content part" do
+      url = "https://example.com/video.mp4"
+      part = ContentPart.video_url(url)
+
+      assert %ContentPart{type: :video_url, url: ^url} = part
+      assert part.data == nil
+      assert part.media_type == nil
+    end
+  end
+
   describe "image/2" do
     setup do
       %{
@@ -108,7 +119,7 @@ defmodule ReqLLM.Message.ContentPartTest do
     end
 
     test "accepts valid content types" do
-      valid_types = [:text, :image_url, :image, :file, :thinking]
+      valid_types = [:text, :image_url, :image, :video_url, :file, :thinking]
 
       for type <- valid_types do
         part = struct!(ContentPart, %{type: type})
@@ -183,6 +194,15 @@ defmodule ReqLLM.Message.ContentPartTest do
       assert output =~ "url: https://example.com/pic.jpg"
     end
 
+    test "inspects video_url content part" do
+      part = ContentPart.video_url("https://example.com/video.mp4")
+      output = inspect(part)
+
+      assert output =~ "#ContentPart<"
+      assert output =~ "video_url"
+      assert output =~ "url: https://example.com/video.mp4"
+    end
+
     test "inspects image content part" do
       data = <<1, 2, 3, 4, 5>>
       part = ContentPart.image(data, "image/jpeg")
@@ -224,6 +244,7 @@ defmodule ReqLLM.Message.ContentPartTest do
         ContentPart.text("hello"),
         ContentPart.thinking("thinking"),
         ContentPart.image_url("https://example.com/pic.jpg"),
+        ContentPart.video_url("https://example.com/video.mp4"),
         ContentPart.image(<<1, 2, 3>>, "image/png"),
         ContentPart.file("data", "file.txt", "text/plain")
       ]

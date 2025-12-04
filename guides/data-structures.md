@@ -113,6 +113,7 @@ msg = %ReqLLM.Message{
 Typed content elements that compose a `Message`. Common variants:
 - `text/1`: `ContentPart.text("...")`
 - `image_url/1`: `ContentPart.image_url("https://...")`
+- `video_url/1`: `ContentPart.video_url("https://...")` for video content
 - `image/2`: `ContentPart.image(binary, "image/png")`
 - `file/3`: `ContentPart.file(binary, "name.ext", "mime/type")`
 - `thinking/1`: `ContentPart.thinking("...")` for models that expose reasoning tokens
