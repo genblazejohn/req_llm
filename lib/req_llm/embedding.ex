@@ -5,12 +5,41 @@ defmodule ReqLLM.Embedding do
   This module provides embedding generation capabilities with support for:
   - Single text embedding generation
   - Batch text embedding generation
+  - Multimodal embedding generation (text, image, video via ContentPart)
   - Model validation for embedding support
 
-  Currently only OpenAI models are supported for embeddings.
+  ## Multimodal Embeddings
+
+  Some providers (like Qwen) support multimodal embeddings. Use `ContentPart` to
+  embed images and videos:
+
+      alias ReqLLM.Message.ContentPart
+
+      # Video embedding
+      {:ok, embedding} = ReqLLM.embed(
+        "qwen_embed:Qwen3-VL-Embedding-8B",
+        ContentPart.video_url("https://example.com/video.mp4"),
+        base_url: "http://localhost:8003"
+      )
+
+      # Image embedding
+      {:ok, embedding} = ReqLLM.embed(
+        "qwen_embed:Qwen3-VL-Embedding-8B",
+        ContentPart.image_url("https://example.com/image.jpg")
+      )
+
+      # Batch multimodal
+      {:ok, embeddings} = ReqLLM.embed(
+        "qwen_embed:Qwen3-VL-Embedding-8B",
+        [
+          ContentPart.video_url("https://example.com/video.mp4"),
+          ContentPart.text("person sitting at desk")
+        ]
+      )
   """
 
   alias LLMDB.Model
+  alias ReqLLM.Message.ContentPart
 
   # Get embedding models dynamically from LLMDB
   defp get_embedding_models do
@@ -89,39 +118,47 @@ defmodule ReqLLM.Embedding do
   def validate_model(model_spec) do
     with {:ok, model} <- ReqLLM.model(model_spec) do
       model_string = LLMDB.Model.spec(model)
-
-      # Check if model is in the embedding models list
       embedding_models = get_embedding_models()
 
-      if model_string in embedding_models do
-        # Also verify the provider supports embedding operations
-        case ReqLLM.provider(model.provider) do
-          {:ok, provider_module} ->
-            # Test if provider can prepare embedding request
-            case provider_module.prepare_request(:embedding, model, "test", []) do
-              {:ok, _} ->
-                {:ok, model}
+      cond do
+        # Model is in LLMDB embedding models list
+        model_string in embedding_models ->
+          validate_provider_embedding_support(model, model_string)
 
-              {:error, _} ->
-                {:error,
-                 ReqLLM.Error.Invalid.Parameter.exception(
-                   parameter:
-                     "model: #{model_string} provider does not support embedding operations"
-                 )}
-            end
+        # Model has embedding capability flag set (custom providers)
+        model.capabilities && model.capabilities.embeddings ->
+          validate_provider_embedding_support(model, model_string)
+
+        # Model doesn't support embeddings
+        true ->
+          {:error,
+           ReqLLM.Error.Invalid.Parameter.exception(
+             parameter: "model: #{model_string} does not support embedding operations"
+           )}
+      end
+    end
+  end
+
+  defp validate_provider_embedding_support(model, model_string) do
+    case ReqLLM.provider(model.provider) do
+      {:ok, provider_module} ->
+        case provider_module.prepare_request(:embedding, model, "test", []) do
+          {:ok, _} ->
+            {:ok, model}
 
           {:error, _} ->
             {:error,
              ReqLLM.Error.Invalid.Parameter.exception(
-               parameter: "model: #{model_string} provider not found"
+               parameter:
+                 "model: #{model_string} provider does not support embedding operations"
              )}
         end
-      else
+
+      {:error, _} ->
         {:error,
          ReqLLM.Error.Invalid.Parameter.exception(
-           parameter: "model: #{model_string} does not support embedding operations"
+           parameter: "model: #{model_string} provider not found"
          )}
-      end
     end
   end
 
@@ -134,15 +171,15 @@ defmodule ReqLLM.Embedding do
   def schema, do: @base_schema
 
   @doc """
-  Generates embeddings for single or multiple text inputs.
+  Generates embeddings for single or multiple inputs.
 
-  Accepts either a single string or a list of strings, automatically handling
-  both cases using pattern matching.
+  Accepts text strings, ContentPart structs, or lists of either, automatically
+  handling both cases using pattern matching.
 
   ## Parameters
 
     * `model_spec` - Model specification in various formats
-    * `input` - Text string or list of text strings to generate embeddings for
+    * `input` - Text string, ContentPart, or list of either
     * `opts` - Additional options (keyword list)
 
   ## Options
@@ -151,6 +188,7 @@ defmodule ReqLLM.Embedding do
     * `:encoding_format` - Format for encoding ("float" or "base64")
     * `:user` - User identifier for tracking
     * `:provider_options` - Provider-specific options
+    * `:base_url` - Override the provider's default base URL
 
   ## Examples
 
@@ -165,10 +203,28 @@ defmodule ReqLLM.Embedding do
       )
       #=> {:ok, [[0.1, -0.2, ...], [0.3, 0.4, ...]]}
 
+      # Multimodal with ContentPart
+      alias ReqLLM.Message.ContentPart
+
+      {:ok, embedding} = ReqLLM.Embedding.embed(
+        "qwen_embed:Qwen3-VL-Embedding-8B",
+        ContentPart.video_url("https://example.com/video.mp4"),
+        base_url: "http://localhost:8003"
+      )
+
+      # Batch multimodal
+      {:ok, embeddings} = ReqLLM.Embedding.embed(
+        "qwen_embed:Qwen3-VL-Embedding-8B",
+        [
+          ContentPart.video_url("https://example.com/video.mp4"),
+          ContentPart.text("person sitting at desk")
+        ]
+      )
+
   """
   @spec embed(
           String.t() | {atom(), keyword()} | struct(),
-          String.t() | [String.t()],
+          String.t() | ContentPart.t() | [String.t() | ContentPart.t()],
           keyword()
         ) :: {:ok, [float()] | [[float()]]} | {:error, term()}
   def embed(model_spec, input, opts \\ [])
@@ -217,6 +273,28 @@ defmodule ReqLLM.Embedding do
     end
   end
 
+  def embed(model_spec, %ContentPart{} = content_part, opts) do
+    with {:ok, model} <- validate_model(model_spec),
+         :ok <- validate_input(content_part),
+         {:ok, provider_module} <- ReqLLM.provider(model.provider),
+         {:ok, request} <- provider_module.prepare_request(:embedding, model, content_part, opts),
+         {:ok, %Req.Response{status: status, body: decoded_response}} when status in 200..299 <-
+           Req.request(request) do
+      extract_single_embedding(decoded_response)
+    else
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error,
+         ReqLLM.Error.API.Request.exception(
+           reason: "HTTP #{status}: Request failed",
+           status: status,
+           response_body: body
+         )}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
   defp validate_input("") do
     {:error, ReqLLM.Error.Invalid.Parameter.exception(parameter: "text: cannot be empty")}
   end
@@ -231,6 +309,31 @@ defmodule ReqLLM.Embedding do
 
   defp validate_input(texts) when is_list(texts) do
     :ok
+  end
+
+  defp validate_input(%ContentPart{type: :text, text: ""}) do
+    {:error, ReqLLM.Error.Invalid.Parameter.exception(parameter: "text: cannot be empty")}
+  end
+
+  defp validate_input(%ContentPart{type: :text, text: nil}) do
+    {:error, ReqLLM.Error.Invalid.Parameter.exception(parameter: "text: cannot be nil")}
+  end
+
+  defp validate_input(%ContentPart{type: type, url: nil})
+       when type in [:video_url, :image_url] do
+    {:error, ReqLLM.Error.Invalid.Parameter.exception(parameter: "url: cannot be nil")}
+  end
+
+  defp validate_input(%ContentPart{type: type})
+       when type in [:text, :video_url, :image_url, :image] do
+    :ok
+  end
+
+  defp validate_input(%ContentPart{type: type}) do
+    {:error,
+     ReqLLM.Error.Invalid.Parameter.exception(
+       parameter: "content_part type: #{inspect(type)} not supported for embeddings"
+     )}
   end
 
   defp extract_single_embedding(%{"data" => [%{"embedding" => embedding}]}) do

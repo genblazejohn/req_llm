@@ -1,0 +1,23 @@
+{
+  "provider": {
+    "id": "qwen_embed",
+    "name": "Qwen Embed"
+  },
+  "models": [
+    {
+      "id": "Qwen3-VL-Embedding-8B",
+      "name": "Qwen3 VL Embedding 8B",
+      "type": "embedding",
+      "capabilities": {
+        "embeddings": true,
+        "multimodal_embedding": true
+      },
+      "modalities": {
+        "input": ["text", "image", "video"],
+        "output": ["embedding"]
+      },
+      "context_length": 32768,
+      "embedding_dimensions": 4096
+    }
+  ]
+}

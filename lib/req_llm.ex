@@ -206,21 +206,61 @@ defmodule ReqLLM do
   def model(%LLMDB.Model{} = model), do: {:ok, model}
 
   def model({provider, model_id, _opts}) when is_atom(provider) and is_binary(model_id) do
-    LLMDB.model(provider, model_id)
+    resolve_model(provider, model_id)
   end
 
   def model({provider, kw}) when is_atom(provider) and is_list(kw) do
     case kw[:id] || kw[:model] do
-      id when is_binary(id) -> LLMDB.model(provider, id)
+      id when is_binary(id) -> resolve_model(provider, id)
       _ -> {:error, ReqLLM.Error.Invalid.Parameter.exception(parameter: :model, value: kw)}
     end
   end
 
-  def model(spec) when is_binary(spec), do: LLMDB.model(spec)
+  def model(spec) when is_binary(spec) do
+    case LLMDB.model(spec) do
+      {:ok, model} ->
+        {:ok, model}
+
+      {:error, _reason} ->
+        case String.split(spec, ":", parts: 2) do
+          [provider_str, model_id] ->
+            provider = String.to_atom(provider_str)
+            resolve_custom_provider_model(provider, model_id)
+
+          _ ->
+            {:error, :unknown_provider}
+        end
+    end
+  end
 
   def model(other) do
     {:error,
      ReqLLM.Error.Validation.Error.exception(message: "Invalid model spec: #{inspect(other)}")}
+  end
+
+  defp resolve_model(provider, model_id) do
+    case LLMDB.model(provider, model_id) do
+      {:ok, model} ->
+        {:ok, model}
+
+      {:error, _reason} ->
+        resolve_custom_provider_model(provider, model_id)
+    end
+  end
+
+  defp resolve_custom_provider_model(provider, model_id) do
+    case ReqLLM.Providers.get(provider) do
+      {:ok, _module} ->
+        LLMDB.Model.new(%{
+          provider: provider,
+          id: model_id,
+          name: model_id,
+          capabilities: %{embeddings: true, chat: false}
+        })
+
+      {:error, _} ->
+        {:error, :unknown_provider}
+    end
   end
 
   # ===========================================================================
