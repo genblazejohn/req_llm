@@ -406,6 +406,10 @@ defmodule ReqLLM.Schema do
         {:map, _} ->
           %{"type" => "object"}
 
+        # Handle {:map, key_type, value_type} - e.g., {:map, :string, :any}
+        {:map, _key_type, _value_type} ->
+          %{"type" => "object"}
+
         :keyword_list ->
           %{"type" => "object"}
 
