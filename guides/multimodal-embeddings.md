@@ -193,16 +193,25 @@ case ReqLLM.embed("qwen_embed:model", ContentPart.video_url(url), opts) do
 end
 ```
 
-## Qwen Embedding Server API
+## Qwen Embedding Server API (OpenAI-compatible)
 
-The `qwen_embed` provider expects a server with the following API:
+The `qwen_embed` provider expects an OpenAI-compatible server at `/v1/embeddings`:
 
-**Endpoint:** `POST /embed`
+**Endpoint:** `POST /v1/embeddings`
 
-**Request:**
+**Request (text only - standard OpenAI):**
 ```json
 {
-  "inputs": [
+  "model": "Qwen3-VL-Embedding-8B",
+  "input": "query text"
+}
+```
+
+**Request (multimodal - extended format):**
+```json
+{
+  "model": "Qwen3-VL-Embedding-8B",
+  "input": [
     {"text": "query text"},
     {"video": "https://..."},
     {"image": "https://..."}
@@ -210,7 +219,7 @@ The `qwen_embed` provider expects a server with the following API:
 }
 ```
 
-**Response:**
+**Response (standard OpenAI):**
 ```json
 {
   "data": [

@@ -2,18 +2,26 @@ defmodule ReqLLM.Providers.QwenEmbed do
   @moduledoc """
   Provider for Qwen3-VL-Embedding multimodal embedding server.
 
-  Supports text, video, and image embeddings via custom /embed endpoint.
-  This is a custom provider for a self-hosted Qwen embedding server,
-  not an OpenAI-compatible API.
+  Supports text, video, and image embeddings via OpenAI-compatible `/v1/embeddings` endpoint.
+  Extends the standard OpenAI format to support multimodal inputs.
 
-  ## Server API Format
+  ## Server API Format (OpenAI-compatible with multimodal extension)
 
-  **Endpoint:** POST /embed
+  **Endpoint:** POST /v1/embeddings
 
-  **Request:**
+  **Request (text only - standard OpenAI):**
   ```json
   {
-    "inputs": [
+    "model": "Qwen3-VL-Embedding-8B",
+    "input": "query text"
+  }
+  ```
+
+  **Request (multimodal - extended format):**
+  ```json
+  {
+    "model": "Qwen3-VL-Embedding-8B",
+    "input": [
       {"text": "query text"},
       {"video": "https://..."},
       {"image": "https://..."}
@@ -21,7 +29,7 @@ defmodule ReqLLM.Providers.QwenEmbed do
   }
   ```
 
-  **Response:**
+  **Response (standard OpenAI):**
   ```json
   {
     "data": [{"embedding": [0.1, -0.2, ...], "index": 0}],
@@ -31,7 +39,7 @@ defmodule ReqLLM.Providers.QwenEmbed do
 
   ## Usage
 
-      # Text embedding
+      # Text embedding (standard)
       {:ok, embedding} = ReqLLM.embed("qwen_embed:Qwen3-VL-Embedding-8B", "query text")
 
       # Video embedding with ContentPart
@@ -93,21 +101,21 @@ defmodule ReqLLM.Providers.QwenEmbed do
       receive_timeout = Keyword.get(opts, :receive_timeout, @default_receive_timeout)
       http_opts = Keyword.get(opts, :req_http_options, [])
 
-      inputs = normalize_embedding_inputs(input)
+      normalized_input = normalize_embedding_input(input)
 
       request =
         Req.new(
           [
-            url: "/embed",
+            url: "/v1/embeddings",
             method: :post,
             base_url: base_url,
             receive_timeout: receive_timeout
           ] ++ http_opts
         )
-        |> Req.Request.register_options([:model, :inputs, :operation])
+        |> Req.Request.register_options([:model, :input, :operation])
         |> Req.Request.merge_options(
           model: model.id,
-          inputs: inputs,
+          input: normalized_input,
           operation: :embedding
         )
         |> attach(model, opts)
@@ -116,37 +124,57 @@ defmodule ReqLLM.Providers.QwenEmbed do
     end
   end
 
-  defp normalize_embedding_inputs(input) when is_binary(input) do
-    [%{text: input}]
-  end
+  # Single text string - keep as-is (standard OpenAI format)
+  defp normalize_embedding_input(input) when is_binary(input), do: input
 
-  defp normalize_embedding_inputs(%ContentPart{type: :text, text: text}) do
-    [%{text: text}]
-  end
+  # List of text strings - keep as-is (standard OpenAI format)
+  defp normalize_embedding_input(inputs) when is_list(inputs) and is_binary(hd(inputs)), do: inputs
 
-  defp normalize_embedding_inputs(%ContentPart{type: :video_url, url: url}) do
+  # ContentPart text - convert to string for standard format
+  defp normalize_embedding_input(%ContentPart{type: :text, text: text}), do: text
+
+  # ContentPart video - convert to multimodal format
+  defp normalize_embedding_input(%ContentPart{type: :video_url, url: url}) do
     [%{video: url}]
   end
 
-  defp normalize_embedding_inputs(%ContentPart{type: :image_url, url: url}) do
+  # ContentPart image URL - convert to multimodal format
+  defp normalize_embedding_input(%ContentPart{type: :image_url, url: url}) do
     [%{image: url}]
   end
 
-  defp normalize_embedding_inputs(%ContentPart{type: :image, data: data, media_type: media_type}) do
+  # ContentPart image binary - convert to base64 data URL
+  defp normalize_embedding_input(%ContentPart{type: :image, data: data, media_type: media_type}) do
     base64 = Base.encode64(data)
     [%{image: "data:#{media_type};base64,#{base64}"}]
   end
 
-  defp normalize_embedding_inputs(inputs) when is_list(inputs) do
-    Enum.flat_map(inputs, &normalize_embedding_inputs/1)
+  # List of ContentParts or mixed inputs - convert to multimodal format
+  defp normalize_embedding_input(inputs) when is_list(inputs) do
+    Enum.map(inputs, &normalize_single_input/1)
   end
 
-  defp normalize_embedding_inputs(%{text: _} = input), do: [input]
-  defp normalize_embedding_inputs(%{video: _} = input), do: [input]
-  defp normalize_embedding_inputs(%{image: _} = input), do: [input]
-  defp normalize_embedding_inputs(%{"text" => t}), do: [%{text: t}]
-  defp normalize_embedding_inputs(%{"video" => v}), do: [%{video: v}]
-  defp normalize_embedding_inputs(%{"image" => i}), do: [%{image: i}]
+  # Map inputs (already in multimodal format)
+  defp normalize_embedding_input(%{text: _} = input), do: [input]
+  defp normalize_embedding_input(%{video: _} = input), do: [input]
+  defp normalize_embedding_input(%{image: _} = input), do: [input]
+
+  defp normalize_single_input(input) when is_binary(input), do: %{text: input}
+  defp normalize_single_input(%ContentPart{type: :text, text: text}), do: %{text: text}
+  defp normalize_single_input(%ContentPart{type: :video_url, url: url}), do: %{video: url}
+  defp normalize_single_input(%ContentPart{type: :image_url, url: url}), do: %{image: url}
+
+  defp normalize_single_input(%ContentPart{type: :image, data: data, media_type: media_type}) do
+    base64 = Base.encode64(data)
+    %{image: "data:#{media_type};base64,#{base64}"}
+  end
+
+  defp normalize_single_input(%{text: _} = input), do: input
+  defp normalize_single_input(%{video: _} = input), do: input
+  defp normalize_single_input(%{image: _} = input), do: input
+  defp normalize_single_input(%{"text" => t}), do: %{text: t}
+  defp normalize_single_input(%{"video" => v}), do: %{video: v}
+  defp normalize_single_input(%{"image" => i}), do: %{image: i}
 
   @impl ReqLLM.Provider
   def attach(request, _model_input, opts) do
@@ -167,9 +195,10 @@ defmodule ReqLLM.Providers.QwenEmbed do
 
   @impl ReqLLM.Provider
   def encode_body(request) do
-    inputs = request.options[:inputs]
+    model = request.options[:model]
+    input = request.options[:input]
 
-    body = %{inputs: inputs}
+    body = %{model: model, input: input}
     encoded_body = Jason.encode!(body)
 
     request

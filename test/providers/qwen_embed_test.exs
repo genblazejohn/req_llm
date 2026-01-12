@@ -35,8 +35,10 @@ defmodule ReqLLM.Providers.QwenEmbedTest do
     test "prepares text embedding request", %{model: model} do
       assert {:ok, request} = QwenEmbed.prepare_request(:embedding, model, "hello world", [])
 
-      assert request.url.path == "/embed"
+      assert request.url.path == "/v1/embeddings"
       assert request.method == :post
+      # Text string stays as-is (standard OpenAI format)
+      assert request.options[:input] == "hello world"
     end
 
     test "prepares video embedding request with ContentPart", %{model: model} do
@@ -45,7 +47,7 @@ defmodule ReqLLM.Providers.QwenEmbedTest do
       assert {:ok, request} =
                QwenEmbed.prepare_request(:embedding, model, video_part, [])
 
-      assert request.options[:inputs] == [%{video: "https://example.com/video.mp4"}]
+      assert request.options[:input] == [%{video: "https://example.com/video.mp4"}]
     end
 
     test "prepares image embedding request with ContentPart", %{model: model} do
@@ -54,16 +56,17 @@ defmodule ReqLLM.Providers.QwenEmbedTest do
       assert {:ok, request} =
                QwenEmbed.prepare_request(:embedding, model, image_part, [])
 
-      assert request.options[:inputs] == [%{image: "https://example.com/image.jpg"}]
+      assert request.options[:input] == [%{image: "https://example.com/image.jpg"}]
     end
 
-    test "prepares text embedding request with ContentPart", %{model: model} do
+    test "prepares text ContentPart as plain string", %{model: model} do
       text_part = ContentPart.text("person sitting at desk")
 
       assert {:ok, request} =
                QwenEmbed.prepare_request(:embedding, model, text_part, [])
 
-      assert request.options[:inputs] == [%{text: "person sitting at desk"}]
+      # ContentPart text converts to plain string (standard OpenAI format)
+      assert request.options[:input] == "person sitting at desk"
     end
 
     test "prepares batch multimodal embedding request", %{model: model} do
@@ -76,11 +79,21 @@ defmodule ReqLLM.Providers.QwenEmbedTest do
       assert {:ok, request} =
                QwenEmbed.prepare_request(:embedding, model, inputs, [])
 
-      assert request.options[:inputs] == [
+      assert request.options[:input] == [
                %{video: "https://example.com/video.mp4"},
                %{text: "person sitting at desk"},
                %{image: "https://example.com/image.jpg"}
              ]
+    end
+
+    test "prepares batch text strings as-is", %{model: model} do
+      inputs = ["hello", "world"]
+
+      assert {:ok, request} =
+               QwenEmbed.prepare_request(:embedding, model, inputs, [])
+
+      # List of strings stays as-is (standard OpenAI format)
+      assert request.options[:input] == ["hello", "world"]
     end
 
     test "rejects non-embedding operations", %{model: model} do
@@ -90,16 +103,32 @@ defmodule ReqLLM.Providers.QwenEmbedTest do
   end
 
   describe "encode_body/1" do
-    test "encodes inputs to JSON body" do
+    test "encodes text input to OpenAI format" do
       request = %Req.Request{
         options: %{
-          inputs: [%{text: "hello"}, %{video: "https://example.com/video.mp4"}]
+          model: "Qwen3-VL-Embedding-8B",
+          input: "hello world"
         }
       }
 
       encoded = QwenEmbed.encode_body(request)
 
-      assert encoded.body == ~s({"inputs":[{"text":"hello"},{"video":"https://example.com/video.mp4"}]})
+      assert encoded.body == ~s({"input":"hello world","model":"Qwen3-VL-Embedding-8B"})
+    end
+
+    test "encodes multimodal input to extended format" do
+      request = %Req.Request{
+        options: %{
+          model: "Qwen3-VL-Embedding-8B",
+          input: [%{text: "hello"}, %{video: "https://example.com/video.mp4"}]
+        }
+      }
+
+      encoded = QwenEmbed.encode_body(request)
+      body = Jason.decode!(encoded.body)
+
+      assert body["model"] == "Qwen3-VL-Embedding-8B"
+      assert body["input"] == [%{"text" => "hello"}, %{"video" => "https://example.com/video.mp4"}]
     end
   end
 end
