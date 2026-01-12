@@ -384,6 +384,7 @@ defmodule ReqLLM.Provider.Defaults do
         :tools,
         :tool_choice,
         :req_http_options,
+        :stream,
         :frequency_penalty,
         :system_prompt,
         :top_p,
@@ -568,7 +569,8 @@ defmodule ReqLLM.Provider.Defaults do
          content: c,
          tool_calls: tc,
          tool_call_id: tcid,
-         name: name
+         name: name,
+         reasoning_details: rd
        }) do
     base_message = %{
       role: to_string(r),
@@ -579,6 +581,7 @@ defmodule ReqLLM.Provider.Defaults do
     |> maybe_add_field(:tool_calls, tc)
     |> maybe_add_field(:tool_call_id, tcid)
     |> maybe_add_field(:name, name)
+    |> maybe_add_field(:reasoning_details, rd)
   end
 
   defp maybe_add_field(message, _key, nil), do: message
@@ -593,27 +596,32 @@ defmodule ReqLLM.Provider.Defaults do
     |> maybe_flatten_single_text()
   end
 
-  # Flatten single text content to a string for cleaner wire format
-  defp maybe_flatten_single_text([%{type: "text", text: text}]), do: text
-
   defp maybe_flatten_single_text(content) do
-    # Filter out nil values first
     filtered = Enum.reject(content, &is_nil/1)
 
     case filtered do
-      [%{type: "text", text: text}] -> text
-      _ -> filtered
+      [%{type: "text", text: text} = block] ->
+        if map_size(block) == 2, do: text, else: [block]
+
+      _ ->
+        filtered
     end
   end
 
-  defp encode_openai_content_part(%ReqLLM.Message.ContentPart{type: :text, text: text}) do
+  defp encode_openai_content_part(%ReqLLM.Message.ContentPart{
+         type: :text,
+         text: text,
+         metadata: metadata
+       }) do
     %{type: "text", text: text}
+    |> merge_content_metadata(metadata)
   end
 
   defp encode_openai_content_part(%ReqLLM.Message.ContentPart{
          type: :image,
          data: data,
-         media_type: media_type
+         media_type: media_type,
+         metadata: metadata
        }) do
     base64 = Base.encode64(data)
 
@@ -623,15 +631,21 @@ defmodule ReqLLM.Provider.Defaults do
         url: "data:#{media_type};base64,#{base64}"
       }
     }
+    |> merge_content_metadata(metadata)
   end
 
-  defp encode_openai_content_part(%ReqLLM.Message.ContentPart{type: :image_url, url: url}) do
+  defp encode_openai_content_part(%ReqLLM.Message.ContentPart{
+         type: :image_url,
+         url: url,
+         metadata: metadata
+       }) do
     %{
       type: "image_url",
       image_url: %{
         url: url
       }
     }
+    |> merge_content_metadata(metadata)
   end
 
   defp encode_openai_content_part(%ReqLLM.Message.ContentPart{type: :video_url, url: url}) do
@@ -661,6 +675,22 @@ defmodule ReqLLM.Provider.Defaults do
   end
 
   defp encode_openai_content_part(_), do: nil
+
+  @passthrough_metadata_keys [:cache_control, "cache_control"]
+
+  defp merge_content_metadata(base, metadata) when is_map(metadata) and map_size(metadata) > 0 do
+    passthrough =
+      metadata
+      |> Map.take(@passthrough_metadata_keys)
+      |> Map.new(fn
+        {"cache_control", v} -> {:cache_control, v}
+        {k, v} -> {k, v}
+      end)
+
+    Map.merge(base, passthrough)
+  end
+
+  defp merge_content_metadata(base, _), do: base
 
   @doc """
   Decodes OpenAI-format response body to ReqLLM.Response.
@@ -716,14 +746,25 @@ defmodule ReqLLM.Provider.Defaults do
   """
   @spec default_decode_stream_event(map(), LLMDB.Model.t()) :: [ReqLLM.StreamChunk.t()]
   def default_decode_stream_event(%{data: data}, model) when is_map(data) do
-    # 1. Handle choices (content + finish_reason)
+    # 1. Handle choices (content + finish_reason + reasoning_details)
     choices_chunks =
       case Map.get(data, "choices") do
         choices when is_list(choices) ->
           Enum.flat_map(choices, fn choice ->
-            # Extract content from delta
-            delta = Map.get(choice, "delta", %{})
+            # Extract content from delta (handle nil delta gracefully)
+            delta = Map.get(choice, "delta") || %{}
             content_chunks = decode_openai_delta(delta)
+
+            # Extract reasoning_details from delta (for Gemini via OpenRouter)
+            # These contain encrypted thought signatures required for tool call round-trips
+            reasoning_details_chunks =
+              case delta do
+                %{"reasoning_details" => details} when is_list(details) and details != [] ->
+                  [ReqLLM.StreamChunk.meta(%{reasoning_details: details})]
+
+                _ ->
+                  []
+              end
 
             # Extract finish_reason
             finish_reason = Map.get(choice, "finish_reason")
@@ -734,9 +775,9 @@ defmodule ReqLLM.Provider.Defaults do
               meta = %{finish_reason: normalized_reason}
               meta = if normalized_reason, do: Map.put(meta, :terminal?, true), else: meta
 
-              content_chunks ++ [ReqLLM.StreamChunk.meta(meta)]
+              content_chunks ++ reasoning_details_chunks ++ [ReqLLM.StreamChunk.meta(meta)]
             else
-              content_chunks
+              content_chunks ++ reasoning_details_chunks
             end
           end)
 

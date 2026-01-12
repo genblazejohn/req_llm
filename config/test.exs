@@ -75,19 +75,26 @@ config :llm_db,
           name: "o1-mini",
           family: "o1",
           capabilities: %{chat: true, reasoning: %{enabled: true}},
-          limits: %{context: 128_000, output: 65_536}
+          limits: %{context: 128_000, output: 65_536},
+          extra: %{api: "responses"}
         },
         "o3-mini" => %{
           name: "o3-mini",
           family: "o3",
           capabilities: %{chat: true, reasoning: %{enabled: true}},
-          limits: %{context: 200_000, output: 100_000}
+          limits: %{context: 200_000, output: 100_000},
+          extra: %{api: "responses"}
         },
         "o4-mini" => %{
           name: "o4-mini",
           family: "o4",
-          capabilities: %{chat: true, reasoning: %{enabled: true}},
-          limits: %{context: 200_000, output: 100_000}
+          capabilities: %{
+            chat: true,
+            reasoning: %{enabled: true},
+            tools: %{enabled: true, streaming: true}
+          },
+          limits: %{context: 200_000, output: 100_000},
+          extra: %{api: "responses"}
         },
         "gpt-5" => %{
           name: "GPT-5",
@@ -242,6 +249,17 @@ config :llm_db,
           capabilities: %{chat: true, tools: %{enabled: true}},
           limits: %{context: 200_000, output: 4096},
           aliases: []
+        },
+        "google/gemini-3-flash-preview" => %{
+          name: "Gemini 3 Flash Preview",
+          family: "gemini-3",
+          capabilities: %{
+            chat: true,
+            tools: %{enabled: true, streaming: true},
+            reasoning: %{enabled: true}
+          },
+          limits: %{context: 1_048_576, output: 65_535},
+          cost: %{input: 0.5, output: 3.0}
         }
       }
     ],
